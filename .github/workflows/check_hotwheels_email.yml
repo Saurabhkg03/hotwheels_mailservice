@@ -39,16 +39,26 @@ jobs:
         run: |
           python check_hotwheels_email.py
 
-      # 5) Pull latest main, then commit + push updated previous.json
+      # 5) Commit and push updated previous.json
       - name: "Commit and push updated previous.json"
         if: ${{ always() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Stage changes if any
+          git add previous.json
+
+          # Commit early if changes exist (required before rebase)
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: temp update previous.json before rebase"
+          fi
+
+          # Pull latest and rebase
           git fetch origin main
           git rebase origin/main
 
+          # Recheck if we still need to commit after rebase
           git add previous.json
           if ! git diff --staged --quiet; then
             git commit -m "chore: update previous.json [ci skip] ($(date -u +"%Y-%m-%dT%H:%M:%SZ"))"
