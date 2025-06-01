@@ -2,37 +2,35 @@ name: "Check Hot Wheels (Email) Every 3 Hours"
 
 on:
   schedule:
-    # At minute 0 past every 3rd hour (UTC): 0 */3 * * *
-    - cron: "0 */3 * * *"
-  workflow_dispatch:  # allows manual trigger from GitHub UI
+    - cron: "0 */3 * * *"  # Every 3 hours (UTC)
+  workflow_dispatch:       # Allows manual trigger from GitHub UI
 
 jobs:
   check-hotwheels:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Checkout the repository
-      - name: Checkout code
+      # 1) Checkout code with full history (needed to rebase & push)
+      - name: "Checkout code"
         uses: actions/checkout@v4
         with:
-          persist-credentials: true   # <-- this tells checkout to use GITHUB_TOKEN for pushes
+          fetch-depth: 0
+          persist-credentials: true  # Needed to push using GITHUB_TOKEN
 
-
-      # 2) Set up Python 3.x
+      # 2) Set up Python 3.11
       - name: "Set up Python"
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
-      # 3) Install dependencies: Playwright, BeautifulSoup, etc.
+      # 3) Install dependencies
       - name: "Install dependencies"
         run: |
           python -m pip install --upgrade pip
           pip install playwright beautifulsoup4
-          # Download Playwright browsers
           playwright install --with-deps
 
-      # 4) Run our Python script
+      # 4) Run the checker script
       - name: "Run Hot Wheels Checker & Email"
         env:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
@@ -41,17 +39,20 @@ jobs:
         run: |
           python check_hotwheels_email.py
 
-      # 5) Commit any changes to previous.json back to the repo
-      - name: "Commit updated previous.json"
+      # 5) Pull latest main, then commit + push updated previous.json
+      - name: "Commit and push updated previous.json"
         if: ${{ always() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git rebase origin/main
+
           git add previous.json
-          # Only commit if previous.json actually changed
           if ! git diff --staged --quiet; then
             git commit -m "chore: update previous.json [ci skip] ($(date -u +"%Y-%m-%dT%H:%M:%SZ"))"
-            git push
+            git push origin HEAD:main
           else
             echo "No changes in previous.json → skipping commit."
           fi
