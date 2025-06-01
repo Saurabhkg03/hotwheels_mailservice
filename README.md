@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="[YOUR_HOTWHEELS_BANNER_IMAGE]" alt="Hot Wheels Banner" width="100%" />
+  <img src="https://cdn.shopify.com/s/files/1/0403/7899/0751/files/Hotwheels_banner.jpg?v=1644123369" alt="Hot Wheels Banner" width="100%" />
 </p>
 
 <h1 align="center">🔥 Hot Wheels Drop Notifier</h1>
