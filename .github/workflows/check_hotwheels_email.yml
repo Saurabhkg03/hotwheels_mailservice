@@ -1,0 +1,54 @@
+name: "Check Hot Wheels (Email) Every 3 Hours"
+
+on:
+  schedule:
+    # At minute 0 past every 3rd hour (UTC): 0 */3 * * *
+    - cron: "0 */3 * * *"
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+
+jobs:
+  check-hotwheels:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Checkout the repository
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      # 2) Set up Python 3.x
+      - name: "Set up Python"
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      # 3) Install dependencies: Playwright, BeautifulSoup, etc.
+      - name: "Install dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright beautifulsoup4
+          # Download Playwright browsers
+          playwright install --with-deps
+
+      # 4) Run our Python script
+      - name: "Run Hot Wheels Checker & Email"
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+        run: |
+          python check_hotwheels_email.py
+
+      # 5) Commit any changes to previous.json back to the repo
+      - name: "Commit updated previous.json"
+        if: ${{ always() }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add previous.json
+          # Only commit if previous.json actually changed
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update previous.json [ci skip] ($(date -u +"%Y-%m-%dT%H:%M:%SZ"))"
+            git push
+          else
+            echo "No changes in previous.json → skipping commit."
+          fi
