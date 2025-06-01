@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Checkout code with full history (needed to rebase & push)
+      # 1) Checkout code with full history (needed for pull & push)
       - name: "Checkout code"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true  # Needed to push using GITHUB_TOKEN
+          persist-credentials: true  # Required to allow pushing using GITHUB_TOKEN
 
       # 2) Set up Python 3.11
       - name: "Set up Python"
@@ -23,14 +23,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      # 3) Install dependencies
+      # 3) Install Python dependencies
       - name: "Install dependencies"
         run: |
           python -m pip install --upgrade pip
           pip install playwright beautifulsoup4
           playwright install --with-deps
 
-      # 4) Run the checker script
+      # 4) Run the Hot Wheels checker script
       - name: "Run Hot Wheels Checker & Email"
         env:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
@@ -49,16 +49,16 @@ jobs:
           # Stage changes if any
           git add previous.json
 
-          # Commit early if changes exist (required before rebase)
+          # Commit early (required before rebase) if there are changes
           if ! git diff --staged --quiet; then
             git commit -m "chore: temp update previous.json before rebase"
           fi
 
-          # Pull latest and rebase
+          # Pull latest changes and rebase
           git fetch origin main
           git rebase origin/main
 
-          # Recheck if we still need to commit after rebase
+          # Re-stage and commit final version if needed
           git add previous.json
           if ! git diff --staged --quiet; then
             git commit -m "chore: update previous.json [ci skip] ($(date -u +"%Y-%m-%dT%H:%M:%SZ"))"
