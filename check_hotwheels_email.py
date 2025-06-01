@@ -20,6 +20,9 @@ GMAIL_USER         = os.getenv("GMAIL_USER", "")           # e.g. "your.email@gm
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")   # the 16-char App Password
 EMAIL_TO           = os.getenv("EMAIL_TO", "")             # where you want the notification
 
+# Banner image URL (hosted online somewhere, or you can replace with your own)
+BANNER_URL = "https://shop.mattel.com.au/cdn/shop/files/Poster_Thumbnail.png?v=1710824118&width=1100"  # example Hot Wheels banner (replace if you want)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) HELPERS: Fetch + Parse
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,38 +78,123 @@ def save_current_list(current: list[str]) -> None:
         json.dump(current, f, ensure_ascii=False, indent=2)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) Send Email via Gmail SMTP
+# 4) Send Email via Gmail SMTP (HTML version with banner)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def send_email_alert(new_items: list[str]) -> None:
     """
-    Compose and send an email listing all new_items.
+    Compose and send an HTML email listing all new_items with a banner.
     Uses Gmail SMTP with an App Password.
     """
     if not (GMAIL_USER and GMAIL_APP_PASSWORD and EMAIL_TO):
         print("🚨 Missing Gmail credentials or destination address. Cannot send email.")
         return
 
-    subject = "🛞 [Hot Wheels] New Items in Stock!"
-    body_lines = [
-        "Hey there,",
-        "",
-        "The following new Hot Wheels cars have just appeared on ToyMarche:",
-        "",
-    ]
+    subject = "🏎️ [Hot Wheels] New Items in Stock!"
+
+    # Build the HTML content
+    html_body = f"""
+    <html>
+    <head>
+      <style>
+        body {{
+          font-family: Arial, sans-serif;
+          background-color: #f9f9f9;
+          color: #333;
+          margin: 0; padding: 0;
+        }}
+        .container {{
+          max-width: 600px;
+          margin: 20px auto;
+          background-color: #ffffff;
+          border-radius: 8px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          overflow: hidden;
+        }}
+        .banner {{
+          width: 100%;
+          height: auto;
+          display: block;
+        }}
+        .content {{
+          padding: 20px 30px;
+        }}
+        h1 {{
+          color: #d32f2f;
+          font-size: 24px;
+          margin-bottom: 10px;
+        }}
+        p {{
+          font-size: 16px;
+          line-height: 1.5;
+          margin-bottom: 20px;
+        }}
+        ul {{
+          list-style-type: none;
+          padding: 0;
+        }}
+        ul li {{
+          background: #ffebee;
+          margin-bottom: 8px;
+          padding: 10px 15px;
+          border-left: 6px solid #d32f2f;
+          font-weight: bold;
+          color: #b71c1c;
+          border-radius: 4px;
+        }}
+        a.button {{
+          display: inline-block;
+          padding: 12px 25px;
+          background-color: #d32f2f;
+          color: white !important;
+          text-decoration: none;
+          font-weight: bold;
+          border-radius: 4px;
+          margin-top: 15px;
+        }}
+        .footer {{
+          text-align: center;
+          font-size: 12px;
+          color: #888;
+          padding: 15px 10px;
+          border-top: 1px solid #eee;
+        }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <img src="{BANNER_URL}" alt="Hot Wheels Banner" class="banner" />
+        <div class="content">
+          <h1>New Hot Wheels Cars Just Arrived!</h1>
+          <p>Hey there,</p>
+          <p>The following new Hot Wheels cars have just appeared on ToyMarche:</p>
+          <ul>
+    """
+
     for name in new_items:
-        body_lines.append(f"• {name}")
-    body_lines.append("")
-    body_lines.append(f"Check them out → {URL}")
-    body_lines.append("")
-    body_lines.append("Good luck grabbing them first!")
-    body = "\n".join(body_lines)
+        html_body += f"<li>{name}</li>"
+
+    html_body += f"""
+          </ul>
+          <p>
+            <a href="{URL}" class="button" target="_blank">Check Them Out</a>
+          </p>
+          <p>Good luck grabbing them first!</p>
+        </div>
+      </div>
+      <div class="footer">
+        &copy; {datetime.utcnow().year} ToyMarche Hot Wheels Tracker
+      </div>
+    </body>
+    </html>
+    """
 
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = GMAIL_USER
     msg["To"] = EMAIL_TO
-    msg.set_content(body)
+    msg.set_content("You need an HTML-compatible email client to view this message.")
+    msg.add_alternative(html_body, subtype="html")
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
