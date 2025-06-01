@@ -4,7 +4,7 @@
 
 <h1 align="center">🔥 Hot Wheels Drop Notifier</h1>
 <p align="center">
-  🚗 Get notified instantly via email when new Hot Wheels cars appear on <a href="https://www.toymarche.com/brand/hot-wheels">ToyMarche</a>.
+  🚗 I made this for myself so I can get notified whenever new hot wheels stock comes out on this website which sells the cars at the lowest price. I dont want to check the website continuously so I get notified instantly via email when new Hot Wheels cars appear on <a href="https://www.toymarche.com/brand/hot-wheels">ToyMarche</a>.
   <br/>
   No need to keep refreshing. It checks for you every 3 hours!
 </p>
