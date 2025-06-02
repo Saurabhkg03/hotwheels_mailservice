@@ -40,6 +40,7 @@
 ```bash
 git clone https://github.com/Saurabhkg03/hotwheels.git
 cd hotwheels
+```
 
 ## Email Screenshot
 <a href="https://freeimage.host/i/FHkqvef"><img src="https://iili.io/FHkqvef.md.jpg" alt="FHkqvef.md.jpg" border="0"></a>
