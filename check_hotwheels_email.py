@@ -16,9 +16,9 @@ URL = "https://www.toymarche.com/brand/hot-wheels"
 PREVIOUS_FILE = "previous.json"
 
 # Gmail SMTP (from GitHub Secrets)
-GMAIL_USER         = os.getenv("GMAIL_USER", "")           # e.g. "your.email@gmail.com"
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")   # the 16-char App Password
-EMAIL_TO           = os.getenv("EMAIL_TO", "")             # where you want the notification
+GMAIL_USER         = os.getenv("GMAIL_USER", "")         # e.g. "your.email@gmail.com"
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "") # the 16-char App Password
+EMAIL_TO           = os.getenv("EMAIL_TO", "")           # where you want the notification (comma-separated for multiple)
 
 # Banner image URL (hosted online somewhere, or you can replace with your own)
 BANNER_URL = "https://shop.mattel.com.au/cdn/shop/files/Poster_Thumbnail.png?v=1710824118&width=1100"  # example Hot Wheels banner (replace if you want)
@@ -88,6 +88,13 @@ def send_email_alert(new_items: list[str]) -> None:
     """
     if not (GMAIL_USER and GMAIL_APP_PASSWORD and EMAIL_TO):
         print("🚨 Missing Gmail credentials or destination address. Cannot send email.")
+        return
+
+    # Split the comma-separated string from EMAIL_TO into a list of recipients
+    recipient_list = [email.strip() for email in EMAIL_TO.split(',') if email.strip()]
+
+    if not recipient_list:
+        print("🚨 No valid recipient email addresses found in EMAIL_TO. Cannot send email.")
         return
 
     subject = "🏎️ [Hot Wheels] New Items in Stock!"
@@ -192,14 +199,14 @@ def send_email_alert(new_items: list[str]) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = GMAIL_USER
-    msg["To"] = EMAIL_TO
+    msg["To"] = ", ".join(recipient_list) # Assign the joined list to the 'To' header
     msg.set_content("You need an HTML-compatible email client to view this message.")
     msg.add_alternative(html_body, subtype="html")
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            smtp.send_message(msg)
+            smtp.send_message(msg) # send_message handles multiple recipients from msg["To"]
         print("✅ Email sent successfully.")
     except Exception as e:
         print("🚨 Failed to send email:", e)
@@ -226,7 +233,7 @@ def main():
     if new_items:
         print(f"  ↳ Found {len(new_items)} new item(s):")
         for itm in new_items:
-            print(f"     • {itm}")
+            print(f"      • {itm}")
 
         # 4) Send email alert
         send_email_alert(new_items)
