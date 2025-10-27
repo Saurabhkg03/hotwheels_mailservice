@@ -35,22 +35,55 @@ def fetch_rendered_html() -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(URL, timeout=60000)
-        page.wait_for_timeout(5000)  # wait 5 sec for JS to populate
-        html = page.content()
-        browser.close()
+        try:
+            page.goto(URL, timeout=60000) # Increased timeout
+            # Wait longer and potentially for a specific element if needed
+            page.wait_for_timeout(7000)  # wait 7 sec for JS to populate
+            html = page.content()
+        except Exception as e:
+            print(f"🚨 Error fetching page: {e}")
+            html = "" # Return empty string on error
+        finally:
+            browser.close()
     return html
 
 def parse_product_list(html: str) -> list[str]:
     """
-    Given the rendered HTML, extract all "product name" strings.
-    Each product name lives in <a class="product-name ng-binding">…</a>.
-    Return a list of names (strings).
+    Given the rendered HTML, extract product names ONLY for items NOT marked as "Out Of Stock".
+    Products are in <div class="product-grid-item">.
+    Product name is in <a class="product-name ng-binding">.
+    Sold out items have a <div class="out-of-stock"> child within the <div class="caption">.
+    Return a list of available product names (strings).
     """
+    if not html: # Handle case where fetching failed
+        return []
     soup = BeautifulSoup(html, "html.parser")
-    anchors = soup.select("a.product-name.ng-binding")
-    names = [a.get_text(strip=True) for a in anchors]
-    return names
+    # Select the main container for each product
+    product_items = soup.select("div.product-grid-item")
+    available_names = []
+    for item in product_items:
+        # Check if the 'out-of-stock' div exists within this product item's caption
+        # Check within the 'caption' div specifically, as 'out-of-stock' might appear elsewhere
+        caption_div = item.select_one("div.caption")
+        is_sold_out = caption_div and caption_div.select_one("div.out-of-stock")
+
+        if not is_sold_out:
+            # If not sold out, find the product name anchor within this item
+            name_anchor = item.select_one("a.product-name.ng-binding")
+            if name_anchor:
+                # Extract and add the name if found
+                name = name_anchor.get_text(strip=True)
+                available_names.append(name)
+            else:
+                print("⚠️ Warning: Found product item without a name anchor.") # Optional warning
+        #else:
+            # Optionally log skipped items
+            #name_anchor_sold_out = item.select_one("a.product-name.ng-binding")
+            #if name_anchor_sold_out:
+            #    print(f"  ↳ Skipping sold out: {name_anchor_sold_out.get_text(strip=True)}")
+
+    return available_names
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) Compare to previous.json
@@ -66,16 +99,29 @@ def load_previous_list() -> list[str]:
     try:
         with open(PREVIOUS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception:
+            # Ensure loaded data is a list of strings
+            if isinstance(data, list) and all(isinstance(item, str) for item in data):
+                return data
+            else:
+                print(f"⚠️ Warning: '{PREVIOUS_FILE}' content is not a list of strings. Resetting.")
+                return []
+    except json.JSONDecodeError:
+        print(f"🚨 Error: Could not decode JSON from '{PREVIOUS_FILE}'. Resetting.")
+        return []
+    except Exception as e:
+        print(f"🚨 Error loading '{PREVIOUS_FILE}': {e}. Resetting.")
         return []
 
 def save_current_list(current: list[str]) -> None:
     """
     Overwrite previous.json with the new list so next run only sees newer items.
     """
-    with open(PREVIOUS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, ensure_ascii=False, indent=2)
+    try:
+        with open(PREVIOUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"🚨 Error saving current list to '{PREVIOUS_FILE}': {e}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4) Send Email via Gmail SMTP (HTML version with banner)
@@ -97,7 +143,7 @@ def send_email_alert(new_items: list[str]) -> None:
         print("🚨 No valid recipient email addresses found in EMAIL_TO. Cannot send email.")
         return
 
-    subject = "🏎️ [Hot Wheels] New Items in Stock!"
+    subject = f"🏎️ [{len(new_items)}] New Hot Wheels Item(s) In Stock!" # Dynamic subject
 
     # Build the HTML content
     html_body = f"""
@@ -153,7 +199,7 @@ def send_email_alert(new_items: list[str]) -> None:
           display: inline-block;
           padding: 12px 25px;
           background-color: #d32f2f;
-          color: white !important;
+          color: white !important; /* Added !important */
           text-decoration: none;
           font-weight: bold;
           border-radius: 4px;
@@ -170,16 +216,19 @@ def send_email_alert(new_items: list[str]) -> None:
     </head>
     <body>
       <div class="container">
-        <img src="{BANNER_URL}" alt="Hot Wheels Banner" class="banner" />
+        <img src="{BANNER_URL}" alt="Hot Wheels Banner" class="banner" onerror="this.style.display='none'" /> <!-- Added onerror fallback -->
         <div class="content">
           <h1>New Hot Wheels Cars Just Arrived!</h1>
           <p>Hey there,</p>
-          <p>The following new Hot Wheels cars have just appeared on ToyMarche:</p>
+          <p>The following {len(new_items)} new Hot Wheels car(s) have just appeared on ToyMarche and are currently listed as in stock:</p>
           <ul>
     """
 
+    # Sanitize item names before inserting into HTML to prevent potential issues
     for name in new_items:
-        html_body += f"<li>{name}</li>"
+        # Basic sanitization: escape HTML special characters
+        safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        html_body += f"<li>{safe_name}</li>"
 
     html_body += f"""
           </ul>
@@ -190,7 +239,7 @@ def send_email_alert(new_items: list[str]) -> None:
         </div>
       </div>
       <div class="footer">
-        &copy; {datetime.utcnow().year} ToyMarche Hot Wheels Tracker
+        Checked at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | &copy; {datetime.utcnow().year} ToyMarche Hot Wheels Tracker
       </div>
     </body>
     </html>
@@ -198,54 +247,79 @@ def send_email_alert(new_items: list[str]) -> None:
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = GMAIL_USER
+    msg["From"] = f"Hot Wheels Notifier <{GMAIL_USER}>" # Improve From header
     msg["To"] = ", ".join(recipient_list) # Assign the joined list to the 'To' header
-    msg.set_content("You need an HTML-compatible email client to view this message.")
+    # Simple text fallback
+    text_fallback = f"Found {len(new_items)} new Hot Wheels item(s):\n\n" + "\n".join([f"- {name}" for name in new_items]) + f"\n\nCheck them out: {URL}"
+    msg.set_content(text_fallback)
+    # Add HTML alternative
     msg.add_alternative(html_body, subtype="html")
 
     try:
+        # Use context manager for SMTP connection
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
             smtp.send_message(msg) # send_message handles multiple recipients from msg["To"]
-        print("✅ Email sent successfully.")
+        print(f"✅ Email alert sent successfully to {', '.join(recipient_list)}.")
+    except smtplib.SMTPAuthenticationError:
+        print("🚨 SMTP Authentication Error: Check GMAIL_USER and GMAIL_APP_PASSWORD.")
     except Exception as e:
-        print("🚨 Failed to send email:", e)
+        print(f"🚨 Failed to send email: {e}")
+        # Consider logging the full exception traceback here for debugging
+        # import traceback
+        # traceback.print_exc()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5) MAIN LOGIC
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    start_time = datetime.utcnow()
     print("="*60)
-    print(f"[{datetime.utcnow().isoformat()}] Checking ToyMarche Hot Wheels…")
+    print(f"[{start_time.isoformat()}] Checking ToyMarche Hot Wheels…")
 
     # 1) Load old list
-    prev_list = load_previous_list()
-    print(f"  ↳ Previously saw {len(prev_list)} items.")
+    prev_list_set = set(load_previous_list()) # Use a set for faster lookups
+    print(f"  ↳ Previously tracking {len(prev_list_set)} items.")
 
-    # 2) Fetch & parse current
+    # 2) Fetch & parse current available items
     html = fetch_rendered_html()
-    current_list = parse_product_list(html)
-    print(f"  ↳ Currently saw {len(current_list)} items.")
+    if not html:
+        print("🚨 Aborting check due to page fetch error.")
+        sys.exit(1) # Exit with an error code
 
-    # 3) Compare
-    new_items = [item for item in current_list if item not in prev_list]
+    current_list = parse_product_list(html)
+    current_list_set = set(current_list) # Use a set
+    print(f"  ↳ Currently found {len(current_list_set)} available items.")
+
+    # 3) Compare: Find items in current that were not in previous
+    new_items = sorted(list(current_list_set - prev_list_set)) # Sort for consistent email order
+
     if new_items:
         print(f"  ↳ Found {len(new_items)} new item(s):")
         for itm in new_items:
             print(f"      • {itm}")
 
-        # 4) Send email alert
+        # 4) Send email alert only if there are new items
         send_email_alert(new_items)
 
-        # 5) Save the updated list
-        save_current_list(current_list)
-        sys.exit(0)
     else:
-        print("  ↳ No new items found. ✅")
-        # Even if no new items, overwrite so next run uses the latest list
+        print("  ↳ No new items found compared to the previous list. ✅")
+
+    # 5) Save the *current* list (available items only) for the next run,
+    # regardless of whether new items were found. This keeps the state updated.
+    if current_list: # Only save if the current list isn't empty (e.g., due to parse error)
+        print(f"  ↳ Saving current {len(current_list)} available items to '{PREVIOUS_FILE}'.")
         save_current_list(current_list)
-        sys.exit(0)
+    else:
+        print(f"⚠️ Warning: Current available list is empty. Not updating '{PREVIOUS_FILE}'.")
+
+
+    end_time = datetime.utcnow()
+    duration = end_time - start_time
+    print(f"[{end_time.isoformat()}] Check finished in {duration.total_seconds():.2f} seconds.")
+    print("="*60)
+    sys.exit(0) # Ensure exit code 0 on success
 
 if __name__ == "__main__":
     main()
