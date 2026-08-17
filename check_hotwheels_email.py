@@ -1,167 +1,125 @@
+import requests
 import json
 import os
-import sys
 import smtplib
-from email.message import EmailMessage
-from datetime import datetime
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+URL = "https://www.toymarche.com/collections/hot-wheels"
+JSON_FILE = "previous.json"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1) CONFIGURATION / CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-
-URL = "https://www.toymarche.com/brand/hot-wheels"
-PREVIOUS_FILE = "previous.json"
-
-# Gmail SMTP (from GitHub Secrets)
-GMAIL_USER         = os.getenv("GMAIL_USER", "")         # e.g. "your.email@gmail.com"
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "") # the 16-char App Password
-EMAIL_TO           = os.getenv("EMAIL_TO", "")           # where you want the notification (comma-separated for multiple)
-
-# Banner image URL (hosted online somewhere, or you can replace with your own)
-BANNER_URL = "https://shop.mattel.com.au/cdn/shop/files/Poster_Thumbnail.png?v=1710824118&width=1100"  # example Hot Wheels banner (replace if you want)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2) HELPERS: Fetch + Parse
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_rendered_html() -> str:
-    """
-    Launch headless Chromium (Playwright), navigate to URL, wait for JS to load,
-    and return the fully-rendered HTML as a string.
-    """
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+def get_current_products():
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    products = {}
+    page = 1
+    
+    # Using Shopify's robust products.json endpoint to avoid HTML scraping issues
+    while True:
+        api_url = f"{URL}/products.json?limit=250&page={page}"
         try:
-            page.goto(URL, timeout=60000) # Increased timeout
-            # Wait longer and potentially for a specific element if needed
-            page.wait_for_timeout(7000)  # wait 7 sec for JS to populate
-            html = page.content()
+            response = requests.get(api_url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                items = data.get('products', [])
+                
+                if not items:
+                    break # Reached the end of the pagination
+                
+                for item in items:
+                    handle = item.get('handle')
+                    title = item.get('title')
+                    link = f"https://www.toymarche.com/products/{handle}"
+                    products[handle] = {"title": title, "link": link}
+                
+                page += 1
+            else:
+                print(f"Failed to fetch page {page}. Status code: {response.status_code}")
+                break
         except Exception as e:
-            print(f"🚨 Error fetching page: {e}")
-            html = "" # Return empty string on error
-        finally:
-            browser.close()
-    return html
+            print(f"Error fetching JSON endpoint: {e}")
+            break
+            
+    return products
 
-def parse_product_list(html: str) -> list[str]:
-    """
-    Given the rendered HTML, extract product names ONLY for items NOT marked as "Out Of Stock".
-    Products are in <div class="product-grid-item">.
-    Product name is in <a class="product-name ng-binding">.
-    Sold out items have a <div class="out-of-stock"> child within the <div class="caption">.
-    Return a list of available product names (strings).
-    """
-    if not html: # Handle case where fetching failed
-        return []
-    soup = BeautifulSoup(html, "html.parser")
-    # Select the main container for each product
-    product_items = soup.select("div.product-grid-item")
-    available_names = []
-    for item in product_items:
-        # Check if the 'out-of-stock' div exists within this product item's caption
-        # Check within the 'caption' div specifically, as 'out-of-stock' might appear elsewhere
-        caption_div = item.select_one("div.caption")
-        is_sold_out = caption_div and caption_div.select_one("div.out-of-stock")
-
-        if not is_sold_out:
-            # If not sold out, find the product name anchor within this item
-            name_anchor = item.select_one("a.product-name.ng-binding")
-            if name_anchor:
-                # Extract and add the name if found
-                name = name_anchor.get_text(strip=True)
-                available_names.append(name)
-            else:
-                print("⚠️ Warning: Found product item without a name anchor.") # Optional warning
-        #else:
-            # Optionally log skipped items
-            #name_anchor_sold_out = item.select_one("a.product-name.ng-binding")
-            #if name_anchor_sold_out:
-            #    print(f"  ↳ Skipping sold out: {name_anchor_sold_out.get_text(strip=True)}")
-
-    return available_names
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3) Compare to previous.json
-# ─────────────────────────────────────────────────────────────────────────────
-
-def load_previous_list() -> list[str]:
-    """
-    Load the JSON file that holds the previously-seen product names.
-    If missing or invalid, return an empty list.
-    """
-    if not os.path.exists(PREVIOUS_FILE):
-        return []
-    try:
-        with open(PREVIOUS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Ensure loaded data is a list of strings
-            if isinstance(data, list) and all(isinstance(item, str) for item in data):
-                return data
-            else:
-                print(f"⚠️ Warning: '{PREVIOUS_FILE}' content is not a list of strings. Resetting.")
-                return []
-    except json.JSONDecodeError:
-        print(f"🚨 Error: Could not decode JSON from '{PREVIOUS_FILE}'. Resetting.")
-        return []
-    except Exception as e:
-        print(f"🚨 Error loading '{PREVIOUS_FILE}': {e}. Resetting.")
-        return []
-
-def save_current_list(current: list[str]) -> None:
-    """
-    Overwrite previous.json with the new list so next run only sees newer items.
-    """
-    try:
-        with open(PREVIOUS_FILE, "w", encoding="utf-8") as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"🚨 Error saving current list to '{PREVIOUS_FILE}': {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4) Send Email via Gmail SMTP (HTML version with banner)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def send_email_alert(new_items: list[str]) -> None:
-    """
-    Compose and send an HTML email listing all new_items with a banner.
-    Uses Gmail SMTP with an App Password.
-    """
-    if not (GMAIL_USER and GMAIL_APP_PASSWORD and EMAIL_TO):
-        print("🚨 Missing Gmail credentials or destination address. Cannot send email.")
+def main():
+    current_products = get_current_products()
+    
+    if not current_products:
+        print("No products found. The website might be blocking the request.")
         return
 
-    # Split the comma-separated string from EMAIL_TO into a list of recipients
-    recipient_list = [email.strip() for email in EMAIL_TO.split(',') if email.strip()]
+    # Load previously scraped products
+    if os.path.exists(JSON_FILE):
+        with open(JSON_FILE, 'r') as f:
+            try:
+                previous_products = json.load(f)
+            except json.JSONDecodeError:
+                previous_products = {}
+    else:
+        previous_products = {}
 
-    if not recipient_list:
-        print("🚨 No valid recipient email addresses found in EMAIL_TO. Cannot send email.")
+    # Identify new products by comparing URL handles
+    new_products = {}
+    for handle, data in current_products.items():
+        if handle not in previous_products:
+            new_products[handle] = data
+
+    if new_products:
+        print(f"Found {len(new_products)} new products!")
+        send_email(new_products)
+        
+        # Save the updated catalog back to previous.json
+        with open(JSON_FILE, 'w') as f:
+            json.dump(current_products, f, indent=4)
+    else:
+        print("No new products found this run.")
+
+def send_email(new_products):
+    sender_email = os.environ.get("SENDER_EMAIL")
+    sender_password = os.environ.get("SENDER_PASSWORD")
+    receiver_email = os.environ.get("RECEIVER_EMAIL")
+    smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", 465))
+
+    if not all([sender_email, sender_password, receiver_email]):
+        print("Error: Email credentials are not fully set in environment variables.")
         return
 
-    subject = f"🏎️ [{len(new_items)}] New Hot Wheels Item(s) In Stock!" # Dynamic subject
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "🚨 New Hot Wheels on ToyMarche!"
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
 
-    # Build the HTML content
-    html_body = f"""
-    <html>
-    <head>
-      <style>
-        body {{
-          font-family: Arial, sans-serif;
-          background-color: #f9f9f9;
-          color: #333;
-          margin: 0; padding: 0;
-        }}
-        .container {{
-          max-width: 600px;
-          margin: 20px auto;
-          background-color: #ffffff;
-          border-radius: 8px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    text_body = "New Hot Wheels available:\n\n"
+    html_body = "<h2>New Hot Wheels Available!</h2><ul>"
+    
+    for handle, data in new_products.items():
+        text_body += f"- {data['title']}: {data['link']}\n"
+        html_body += f"<li><a href='{data['link']}'>{data['title']}</a></li>"
+    
+    html_body += "</ul>"
+
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, receiver_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, receiver_email, msg.as_string())
+        print("Notification email sent successfully.")
+    except Exception as e:
+        print(f"Error sending email: {e}")
+
+if __name__ == "__main__":
+    main()          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
           overflow: hidden;
         }}
         .banner {{
